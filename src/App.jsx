@@ -158,11 +158,15 @@ export default function App() {
 
   async function handleFinishEdit() {
     setSavingOrder(true)
-    const updates = links.map((l, i) => ({ id: l.id, position: i + 1 }))
-    const { error } = await supabase.from('product_team_links').upsert(updates)
+    const results = await Promise.all(
+      links.map((l, i) =>
+        supabase.from('product_team_links').update({ position: i + 1 }).eq('id', l.id)
+      )
+    )
     setSavingOrder(false)
-    if (error) {
-      console.error('儲存順序失敗', error)
+    const failed = results.find(r => r.error)
+    if (failed) {
+      console.error('儲存順序失敗', failed.error)
       showToast('儲存順序失敗，請稍後再試')
       return
     }
