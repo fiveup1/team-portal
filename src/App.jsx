@@ -1,5 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from './supabaseClient'
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core'
+import { arrayMove, SortableContext, rectSortingStrategy } from '@dnd-kit/sortable'
+import SortableTile from './SortableTile'
 
 const PALETTE = ['#0077B6', '#00B4D8', '#0096C7', '#023E8A', '#0353A4', '#0096C7', '#014F86', '#48A9D6', '#005F8A', '#2A6F97']
 
@@ -43,8 +53,15 @@ export default function App() {
   const [newUrl, setNewUrl] = useState('')
   const [delTarget, setDelTarget] = useState(null) // {id, name}
   const [toast, setToast] = useState('')
+  const [editMode, setEditMode] = useState(false)
+  const [savingOrder, setSavingOrder] = useState(false)
   const toastTimer = useRef(null)
   const nameInputRef = useRef(null)
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 8 } })
+  )
 
   useEffect(() => {
     loadLinks()
@@ -129,6 +146,30 @@ export default function App() {
     showToast('已刪除「' + name + '」')
   }
 
+  function handleDragEnd(event) {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    setLinks(prev => {
+      const oldIndex = prev.findIndex(l => l.id === active.id)
+      const newIndex = prev.findIndex(l => l.id === over.id)
+      return arrayMove(prev, oldIndex, newIndex)
+    })
+  }
+
+  async function handleFinishEdit() {
+    setSavingOrder(true)
+    const updates = links.map((l, i) => ({ id: l.id, position: i + 1 }))
+    const { error } = await supabase.from('product_team_links').upsert(updates)
+    setSavingOrder(false)
+    if (error) {
+      console.error('儲存順序失敗', error)
+      showToast('儲存順序失敗，請稍後再試')
+      return
+    }
+    setEditMode(false)
+    showToast('排序已儲存')
+  }
+
   const filtered = query.trim()
     ? links.filter(l => l.name.toLowerCase().includes(query.trim().toLowerCase()))
     : links
@@ -144,59 +185,85 @@ export default function App() {
               <p>一鍵直達組內常用系統與表單</p>
             </div>
           </div>
-          <div className="search-wrap">
-            <input
-              type="text"
-              placeholder="搜尋連結名稱..."
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-            />
+          <div className="header-actions">
+            {!editMode && (
+              <div className="search-wrap">
+                <input
+                  type="text"
+                  placeholder="搜尋連結名稱..."
+                  value={query}
+                  onChange={e => setQuery(e.target.value)}
+                />
+              </div>
+            )}
+            {!loading && !editMode && (
+              <button className="edit-toggle-btn" onClick={() => setEditMode(true)}>
+                <span className="edit-icon">✎</span> 編輯排序
+              </button>
+            )}
+            {editMode && (
+              <button className="edit-toggle-btn done" onClick={handleFinishEdit} disabled={savingOrder}>
+                {savingOrder ? '儲存中...' : '完成'}
+              </button>
+            )}
           </div>
         </div>
       </header>
 
       <main>
-        <div className="grid">
-          {loading && <div className="empty-hint">載入中...</div>}
+        {loading && <div className="grid"><div className="empty-hint">載入中...</div></div>}
 
-          {!loading && filtered.map(link => (
-            <a key={link.id} className="tile" href={link.url} target="_blank" rel="noopener noreferrer">
-              <button
-                className="del-btn"
-                type="button"
-                title="刪除"
-                onClick={e => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  setDelTarget({ id: link.id, name: link.name })
+        {!loading && editMode && (
+          <>
+            <p className="edit-hint">拖拉圖示調整順序，點左上角「－」可以刪除</p>
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+              <SortableContext items={links.map(l => l.id)} strategy={rectSortingStrategy}>
+                <div className="grid">
+                  {links.map((link, idx) => (
+                    <SortableTile
+                      key={link.id}
+                      link={link}
+                      index={idx}
+                      getColor={getColor}
+                      getMonogram={getMonogram}
+                      onRequestDelete={setDelTarget}
+                    />
+                  ))}
+                </div>
+              </SortableContext>
+            </DndContext>
+          </>
+        )}
+
+        {!loading && !editMode && (
+          <div className="grid">
+            {filtered.map(link => (
+              <a key={link.id} className="tile" href={link.url} target="_blank" rel="noopener noreferrer">
+                <div className="badge" style={{ background: getColor(link.name) }}>
+                  {getMonogram(link.name)}
+                </div>
+                <div className="tile-name">{link.name}</div>
+              </a>
+            ))}
+
+            {!query.trim() && (
+              <div
+                className="tile add-tile"
+                onClick={() => {
+                  setAddOpen(true)
+                  setTimeout(() => nameInputRef.current?.focus(), 50)
                 }}
               >
-                &times;
-              </button>
-              <div className="badge" style={{ background: getColor(link.name) }}>
-                {getMonogram(link.name)}
+                <div className="add-badge">+</div>
+                <div className="tile-name">新增連結</div>
               </div>
-              <div className="tile-name">{link.name}</div>
-            </a>
-          ))}
+            )}
 
-          {!loading && !query.trim() && (
-            <div
-              className="tile add-tile"
-              onClick={() => {
-                setAddOpen(true)
-                setTimeout(() => nameInputRef.current?.focus(), 50)
-              }}
-            >
-              <div className="add-badge">+</div>
-              <div className="tile-name">新增連結</div>
-            </div>
-          )}
-
-          {!loading && filtered.length === 0 && query.trim() && (
-            <div className="empty-hint">找不到符合「{query.trim()}」的連結</div>
-          )}
-        </div>
+            {filtered.length === 0 && query.trim() && (
+              <div className="empty-hint">找不到符合「{query.trim()}」的連結</div>
+            )}
+          </div>
+        )}
       </main>
 
       <footer>
