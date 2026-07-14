@@ -61,6 +61,7 @@ export default function App() {
     const { data, error } = await supabase
       .from('product_team_links')
       .select('*')
+      .order('position', { ascending: true, nullsFirst: false })
       .order('created_at', { ascending: true })
 
     if (error) {
@@ -71,15 +72,16 @@ export default function App() {
     }
 
     if (data.length === 0) {
+      const seedRows = DEFAULT_LINKS.map((link, idx) => ({ ...link, position: idx + 1 }))
       const { data: seeded, error: seedError } = await supabase
         .from('product_team_links')
-        .insert(DEFAULT_LINKS)
+        .insert(seedRows)
         .select()
       if (seedError) {
         console.error('初始化失敗', seedError)
         setLinks([])
       } else {
-        setLinks(seeded)
+        setLinks([...seeded].sort((a, b) => (a.position ?? 0) - (b.position ?? 0)))
       }
     } else {
       setLinks(data)
@@ -93,9 +95,11 @@ export default function App() {
     if (!name || !url) return
     if (!/^https?:\/\//i.test(url)) url = 'https://' + url
 
+    const nextPosition = links.reduce((max, l) => Math.max(max, l.position ?? 0), 0) + 1
+
     const { data, error } = await supabase
       .from('product_team_links')
-      .insert([{ name, url }])
+      .insert([{ name, url, position: nextPosition }])
       .select()
 
     if (error) {
